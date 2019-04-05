@@ -27,7 +27,7 @@ type Queue struct {
 	ds      datastore.Datastore // Must be threadsafe
 	dequeue chan cid.Cid
 	enqueue chan cid.Cid
-	cancel  chan struct{}
+	close   chan struct{}
 }
 
 // NewQueue creates a queue for cids
@@ -45,7 +45,7 @@ func NewQueue(ctx context.Context, name string, ds datastore.Datastore) (*Queue,
 		ds:      namespaced,
 		dequeue: make(chan cid.Cid),
 		enqueue: make(chan cid.Cid),
-		cancel:  make(chan struct{}),
+		close:   make(chan struct{}),
 	}
 	q.work()
 	return q, nil
@@ -54,7 +54,7 @@ func NewQueue(ctx context.Context, name string, ds datastore.Datastore) (*Queue,
 // Close stops the queue
 func (q *Queue) Close() error {
 	select {
-	case q.cancel <- struct{}{}:
+	case q.close <- struct{}{}:
 	case <-q.ctx.Done():
 	}
 	return nil
@@ -129,6 +129,7 @@ func (q *Queue) work() {
 				nextKey := q.queueKey(q.tail)
 
 				if err := q.ds.Put(nextKey, toQueue.Bytes()); err != nil {
+					log.Errorf("Failed to enqueue cid: %s", err)
 					continue
 				}
 
@@ -137,13 +138,14 @@ func (q *Queue) work() {
 				err := q.ds.Delete(k)
 
 				if err != nil {
+					log.Errorf("Failed to delete queued cid %s with key %s: %s", c, k, err)
 					continue
 				}
 				c = cid.Undef
 				q.head++
 			case <-q.ctx.Done():
 				return
-			case <-q.cancel:
+			case <-q.close:
 				return
 			}
 		}
