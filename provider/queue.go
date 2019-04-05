@@ -28,6 +28,7 @@ type Queue struct {
 	dequeue chan cid.Cid
 	enqueue chan cid.Cid
 	close   chan struct{}
+	done    chan struct{}
 }
 
 // NewQueue creates a queue for cids
@@ -46,6 +47,7 @@ func NewQueue(ctx context.Context, name string, ds datastore.Datastore) (*Queue,
 		dequeue: make(chan cid.Cid),
 		enqueue: make(chan cid.Cid),
 		close:   make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 	q.work()
 	return q, nil
@@ -53,10 +55,8 @@ func NewQueue(ctx context.Context, name string, ds datastore.Datastore) (*Queue,
 
 // Close stops the queue
 func (q *Queue) Close() error {
-	select {
-	case q.close <- struct{}{}:
-	case <-q.ctx.Done():
-	}
+	q.close <- struct{}{}
+	<-q.done
 	return nil
 }
 
@@ -144,8 +144,10 @@ func (q *Queue) work() {
 				c = cid.Undef
 				q.head++
 			case <-q.ctx.Done():
+				q.done <- struct{}{}
 				return
 			case <-q.close:
+				q.done <- struct{}{}
 				return
 			}
 		}
